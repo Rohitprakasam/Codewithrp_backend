@@ -89,3 +89,25 @@ export const createStudent = async (req: AuthenticatedRequest, res: Response) =>
     return sendError(res, "Failed to create student", 500);
   }
 };
+
+export const deleteStudent = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    
+    // Prevent deleting an admin
+    const userCheck = await query("SELECT role FROM users WHERE id = $1", [id]);
+    if (userCheck.rows.length === 0) {
+      return sendError(res, "User not found", 404);
+    }
+    if (userCheck.rows[0].role === "admin") {
+      return sendError(res, "Cannot delete an admin user", 403);
+    }
+
+    await query("DELETE FROM users WHERE id = $1", [id]);
+
+    return sendSuccess(res, null, "Student deleted successfully");
+  } catch (error) {
+    console.error("Delete student error:", error);
+    return sendError(res, "Failed to delete student", 500);
+  }
+};

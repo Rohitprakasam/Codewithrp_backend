@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { exec, execSync } from "child_process";
+import { execFile, execFileSync } from "child_process";
 
 export interface CodexResponse {
   success: boolean;
@@ -28,7 +28,7 @@ export const compileJavaCode = async (code: string): Promise<CompiledProgram> =>
   // 3. Compile code
   console.log(`Compiling Java code locally in ${tempDir}...`);
   try {
-    execSync("javac Main.java", { cwd: tempDir, stdio: "pipe", timeout: 15000 });
+    execFileSync("javac", ["-g:none", "-Xlint:none", "Main.java"], { cwd: tempDir, stdio: "pipe", timeout: 15000 });
   } catch (compileError: any) {
     const stderr = (compileError.stderr && compileError.stderr.toString().trim())
       ? compileError.stderr.toString()
@@ -53,7 +53,17 @@ export const compileJavaCode = async (code: string): Promise<CompiledProgram> =>
   return {
     run: (input = ""): Promise<CodexResponse> => {
       return new Promise<CodexResponse>((resolve) => {
-        const child = exec("java -cp . Main", {
+        const child = execFile("java", [
+          "-XX:TieredStopAtLevel=1",
+          "-XX:+UseSerialGC",
+          "-XX:-UsePerfData",
+          "-Djava.security.egd=file:/dev/./urandom",
+          "-Xms16m",
+          "-Xmx64m",
+          "-cp",
+          ".",
+          "Main"
+        ], {
           cwd: tempDir,
           timeout: timeoutMs,
           killSignal: "SIGKILL",

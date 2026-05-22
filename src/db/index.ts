@@ -58,5 +58,6 @@ export const initDb = async () => {
     console.log("Database schema initialized and seeded successfully.");
   } catch (error) {
     console.error("Failed to initialize database schema:", error);
+    throw error;
   }
 };

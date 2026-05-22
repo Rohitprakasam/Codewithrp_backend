@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
+import bcrypt from "bcryptjs";
 
 dotenv.config();
 
@@ -36,6 +37,24 @@ export const initDb = async () => {
     }
     const schemaSql = fs.readFileSync(schemaPath, "utf8");
     await pool.query(schemaSql);
+
+    // Create or update admin from .env
+    const adminEmail = process.env.ADMIN_EMAIL;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+    const adminName = process.env.ADMIN_NAME || "System Admin";
+
+    if (adminEmail && adminPassword) {
+      const passwordHash = await bcrypt.hash(adminPassword, 10);
+      await pool.query(
+        `INSERT INTO users (name, email, password_hash, role) 
+         VALUES ($1, $2, $3, 'admin') 
+         ON CONFLICT (email) 
+         DO UPDATE SET password_hash = $3, name = $1`,
+        [adminName, adminEmail.toLowerCase(), passwordHash]
+      );
+      console.log(`Admin user configured from .env: ${adminEmail}`);
+    }
+
     console.log("Database schema initialized and seeded successfully.");
   } catch (error) {
     console.error("Failed to initialize database schema:", error);

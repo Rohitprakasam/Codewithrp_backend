@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import dns from "dns";
+dns.setDefaultResultOrder("ipv4first");
 import { initDb } from "./db";
 import authRoutes from "./auth/auth.routes";
 import problemRoutes from "./problems/problems.routes";

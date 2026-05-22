@@ -17,8 +17,9 @@ const cleanOutput = (str: string): string => {
 
 const getErrorStatus = (errorMsg: string) => {
   if (!errorMsg) return "Compilation Error";
-  if (errorMsg.includes("Time Limit Exceeded")) return "TLE";
-  if (errorMsg.includes("Exception in thread") || errorMsg.includes("java.lang.")) return "Runtime Error";
+  const msg = errorMsg.toLowerCase();
+  if (msg.includes("time limit exceeded") || msg.includes("etimedout") || msg.includes("timeout")) return "TLE";
+  if (msg.includes("exception in thread") || msg.includes("java.lang.")) return "Runtime Error";
   return "Compilation Error";
 };
 

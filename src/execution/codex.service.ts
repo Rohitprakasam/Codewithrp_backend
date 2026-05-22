@@ -27,7 +27,9 @@ export const executeJavaCode = async (code: string, input = ""): Promise<CodexRe
     try {
       execSync("javac Main.java", { cwd: tempDir, stdio: "pipe", timeout: 5000 });
     } catch (compileError: any) {
-      const stderr = compileError.stderr ? compileError.stderr.toString() : compileError.message;
+      const stderr = (compileError.stderr && compileError.stderr.toString().trim())
+        ? compileError.stderr.toString()
+        : compileError.message;
       return {
         success: false,
         output: "",

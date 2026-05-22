@@ -11,7 +11,7 @@ export interface CodexResponse {
 export const executeJavaCode = async (code: string, input = ""): Promise<CodexResponse> => {
   // Use a temporary folder in the backend directory to compile and run code
   const tempDir = path.join(process.cwd(), `temp_exec_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`);
-  const timeoutMs = 8000; // 8 seconds execution timeout
+  const timeoutMs = 10000; // 10 seconds execution timeout
 
   try {
     // 1. Create temp directory
@@ -25,7 +25,7 @@ export const executeJavaCode = async (code: string, input = ""): Promise<CodexRe
     console.log(`Compiling Java code locally in ${tempDir}...`);
 
     try {
-      execSync("javac Main.java", { cwd: tempDir, stdio: "pipe", timeout: 5000 });
+      execSync("javac Main.java", { cwd: tempDir, stdio: "pipe", timeout: 15000 });
     } catch (compileError: any) {
       const stderr = (compileError.stderr && compileError.stderr.toString().trim())
         ? compileError.stderr.toString()

@@ -1,7 +1,7 @@
 import { Response } from "express";
 import { query } from "../db";
 import { AuthenticatedRequest } from "../middlewares/auth";
-import { executeJavaCode } from "./codex.service";
+import { executeJavaCode, compileJavaCode } from "./codex.service";
 import { executeRunSchema, executeSubmitSchema } from "../validators/schemas";
 import { sendSuccess, sendError } from "../utils/response";
 
@@ -58,48 +58,65 @@ export const executeRun = async (req: AuthenticatedRequest, res: Response) => {
     let stderr = "";
     let status = "Accepted";
 
-    // 3. Execute against testcases
-    // Run the first visible testcase
-    const firstTc = testcases[0];
-    const codexRes = await executeJavaCode(source_code, firstTc.input);
+    // 3. Compile code ONCE
+    let program;
+    try {
+      program = await compileJavaCode(source_code);
+    } catch (compileError: any) {
+      const errorMsg = compileError.error || (compileError.message || String(compileError));
+      return res.status(200).json({
+        stdout: "",
+        stderr: errorMsg,
+        status: getErrorStatus(errorMsg),
+      });
+    }
 
-    if (codexRes.error) {
-      allPassed = false;
-      stderr = codexRes.error;
-      status = getErrorStatus(stderr);
-    } else {
-      stdout = codexRes.output;
-      const actual = cleanOutput(stdout);
-      const expected = cleanOutput(firstTc.expected_output);
+    try {
+      // 4. Execute against testcases
+      // Run the first visible testcase
+      const firstTc = testcases[0];
+      const codexRes = await program.run(firstTc.input);
 
-      if (actual !== expected) {
+      if (codexRes.error) {
         allPassed = false;
-        status = "Wrong Answer";
-        stdout = `Test Case 1 Failed:\nInput:\n${firstTc.input}\n\nExpected:\n${firstTc.expected_output}\n\nActual Output:\n${stdout}`;
+        stderr = codexRes.error;
+        status = getErrorStatus(stderr);
       } else {
-        // Run remaining testcases if the first one passes
-        for (let i = 1; i < testcases.length; i++) {
-          const tc = testcases[i];
-          const tcRes = await executeJavaCode(source_code, tc.input);
+        stdout = codexRes.output;
+        const actual = cleanOutput(stdout);
+        const expected = cleanOutput(firstTc.expected_output);
 
-          if (tcRes.error) {
-            allPassed = false;
-            stderr = tcRes.error;
-            status = getErrorStatus(stderr);
-            break;
-          }
+        if (actual !== expected) {
+          allPassed = false;
+          status = "Wrong Answer";
+          stdout = `Test Case 1 Failed:\nInput:\n${firstTc.input}\n\nExpected:\n${firstTc.expected_output}\n\nActual Output:\n${stdout}`;
+        } else {
+          // Run remaining testcases if the first one passes
+          for (let i = 1; i < testcases.length; i++) {
+            const tc = testcases[i];
+            const tcRes = await program.run(tc.input);
 
-          const act = cleanOutput(tcRes.output);
-          const exp = cleanOutput(tc.expected_output);
+            if (tcRes.error) {
+              allPassed = false;
+              stderr = tcRes.error;
+              status = getErrorStatus(stderr);
+              break;
+            }
 
-          if (act !== exp) {
-            allPassed = false;
-            status = "Wrong Answer";
-            stdout = `Test Case ${i + 1} Failed:\nInput:\n${tc.input}\n\nExpected:\n${tc.expected_output}\n\nActual Output:\n${tcRes.output}`;
-            break;
+            const act = cleanOutput(tcRes.output);
+            const exp = cleanOutput(tc.expected_output);
+
+            if (act !== exp) {
+              allPassed = false;
+              status = "Wrong Answer";
+              stdout = `Test Case ${i + 1} Failed:\nInput:\n${tc.input}\n\nExpected:\n${tc.expected_output}\n\nActual Output:\n${tcRes.output}`;
+              break;
+            }
           }
         }
       }
+    } finally {
+      await program.cleanup();
     }
 
     if (allPassed && status === "Accepted") {
@@ -162,29 +179,62 @@ export const executeSubmit = async (req: AuthenticatedRequest, res: Response) =>
     let runtimeSum = 0;
     let lastCodexResponse: any = null;
 
-    // 2. Execute all testcases
-    // Run testcases in sequence (or Promise.all for faster grading, let's use sequence to avoid overwhelming Codex API)
-    for (const tc of testcases) {
-      const startTime = Date.now();
-      const codexRes = await executeJavaCode(source_code, tc.input);
-      const executionTime = Date.now() - startTime;
-      runtimeSum += executionTime;
-      lastCodexResponse = codexRes;
+    // 2. Compile code ONCE
+    let program;
+    try {
+      program = await compileJavaCode(source_code);
+    } catch (compileError: any) {
+      const errorMsg = compileError.error || (compileError.message || String(compileError));
+      finalStatus = getErrorStatus(errorMsg);
 
-      if (codexRes.error) {
-        finalStatus = getErrorStatus(codexRes.error);
-        break; // Stop running testcases if compilation/runtime error is found
+      // Record failed compilation submission
+      const subResult = await query(
+        `INSERT INTO submissions (user_id, problem_id, source_code, status, runtime, memory, passed_count, total_count)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [userId, problem_id, source_code, finalStatus, "0s", "0 MB", 0, totalCount]
+      );
+
+      // Save Execution Log (for debugging)
+      await query(
+        `INSERT INTO execution_logs (submission_id, judge0_token, raw_response)
+         VALUES ($1, $2, $3)`,
+        [subResult.rows[0].id, "local-exec", { success: false, output: "", error: errorMsg }]
+      );
+
+      return res.status(200).json({
+        status: finalStatus,
+        passed: 0,
+        total: totalCount,
+        runtime: "0s",
+      });
+    }
+
+    try {
+      // 3. Execute all testcases
+      for (const tc of testcases) {
+        const startTime = Date.now();
+        const codexRes = await program.run(tc.input);
+        const executionTime = Date.now() - startTime;
+        runtimeSum += executionTime;
+        lastCodexResponse = codexRes;
+
+        if (codexRes.error) {
+          finalStatus = getErrorStatus(codexRes.error);
+          break; // Stop running testcases if compilation/runtime error is found
+        }
+
+        const actual = cleanOutput(codexRes.output);
+        const expected = cleanOutput(tc.expected_output);
+
+        if (actual === expected) {
+          passedCount++;
+        } else {
+          finalStatus = "Wrong Answer";
+          // Do not break here; LeetCode runs all testcases to count total passes
+        }
       }
-
-      const actual = cleanOutput(codexRes.output);
-      const expected = cleanOutput(tc.expected_output);
-
-      if (actual === expected) {
-        passedCount++;
-      } else {
-        finalStatus = "Wrong Answer";
-        // Do not break here; LeetCode runs all testcases to count total passes
-      }
+    } finally {
+      await program.cleanup();
     }
 
     // Adjust status if compilation failed vs wrong answer
